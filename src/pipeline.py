@@ -89,37 +89,74 @@ class Pipeline:
 
     def forecast(self):
 
-        print("\nSTEP 5 : FORECASTING")
+        print("\nSTEP 5 : RECURSIVE FORECASTING")
 
-        model = joblib.load(self.root / "models/best_model.pkl")
+        # --------------------------------------------------
+        # Load model artifacts
+        # --------------------------------------------------
 
-        features = joblib.load(self.root / "models/feature_columns.pkl")
+        model = joblib.load(self.root / "models" / "best_model.pkl")
 
-        train = pd.read_csv(self.root / "data/processed/train_clean.csv")
+        feature_columns = joblib.load(self.root / "models" / "feature_columns.pkl")
 
-        test = pd.read_csv(self.root / "data/raw/test.csv")
+        # --------------------------------------------------
+        # Load CLEAN datasets
+        # --------------------------------------------------
+
+        train = pd.read_csv(self.root / "data" / "processed" / "train_clean.csv")
+
+        test = pd.read_csv(self.root / "data" / "processed" / "test_clean.csv")
 
         train["DateTime"] = pd.to_datetime(train["DateTime"])
 
         test["DateTime"] = pd.to_datetime(test["DateTime"])
 
-        forecaster = RecursiveForecaster(model=model, feature_fn=self.engineer.engineer)
+        # Preserve original order
+        test["__order"] = range(len(test))
 
-        predictions = []
+        # --------------------------------------------------
+        # Recursive forecaster
+        # --------------------------------------------------
+
+        forecaster = RecursiveForecaster(
+            model=model, feature_fn=self.engineer.transform
+        )
+
+        prediction_frames = []
+
+        # --------------------------------------------------
+        # Forecast junction by junction
+        # --------------------------------------------------
 
         for junction in sorted(test["Junction"].unique()):
 
-            history = train[train["Junction"] == junction]
+            print(f"Forecasting Junction {junction}")
 
-            future = test[test["Junction"] == junction]
+            history = (
+                train[train["Junction"] == junction].copy().sort_values("DateTime")
+            )
 
-            preds = forecaster.forecast(history, future, features)
+            future = test[test["Junction"] == junction].copy().sort_values("DateTime")
 
-            predictions.extend(preds)
+            predictions = forecaster.forecast(history, future, feature_columns)
 
-        build_submission(test["ID"], predictions)
+            future["Vehicles"] = predictions
 
-        print("Submission generated.")
+            prediction_frames.append(future[["ID", "Vehicles", "__order"]])
+
+        # --------------------------------------------------
+        # Restore original order
+        # --------------------------------------------------
+
+        submission = pd.concat(prediction_frames, ignore_index=True)
+
+        submission = submission.sort_values("__order")
+
+        build_submission(submission["ID"], submission["Vehicles"])
+
+        print("\nSubmission generated successfully.")
+
+        print(f"Total Predictions : {len(submission)}")
 
     # --------------------------------------------------
 

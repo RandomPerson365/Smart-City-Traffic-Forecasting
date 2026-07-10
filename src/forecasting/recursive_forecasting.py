@@ -3,20 +3,13 @@ import numpy as np
 
 
 class RecursiveForecaster:
-    """
-    Recursive traffic forecaster.
-
-    Uses previous predictions to build lag features
-    for future timestamps.
-    """
 
     def __init__(self, model, feature_fn):
 
         self.model = model
-
         self.feature_fn = feature_fn
 
-    # ---------------------------------------
+    # Replace ONLY this function ↓↓↓
 
     def forecast(self, history, future, features):
 
@@ -32,30 +25,29 @@ class RecursiveForecaster:
 
             row["Vehicles"] = np.nan
 
-            temp = pd.concat([history, pd.DataFrame([row])], ignore_index=True)
+            # Add next timestamp
+            history = pd.concat([history, pd.DataFrame([row])], ignore_index=True)
 
-            temp = self.feature_fn(temp)
+            # Only keep the last 30 rows for feature generation
+            window = history.tail(30).copy()
 
-            missing = [c for c in features if c not in temp.columns]
+            # Generate features
+            window = self.feature_fn(window)
+
+            missing = [c for c in features if c not in window.columns]
 
             if missing:
-
                 raise ValueError(f"Missing features: {missing}")
 
-            x = temp.loc[[temp.index[-1]], features]
-
-            x = x.fillna(0)
+            x = window.loc[[window.index[-1]], features].fillna(0)
 
             prediction = float(self.model.predict(x)[0])
 
             prediction = max(0, round(prediction))
 
-            temp.loc[temp.index[-1], "Vehicles"] = prediction
-
-            history = temp[history.columns]
+            # Save prediction into history
+            history.loc[history.index[-1], "Vehicles"] = prediction
 
             predictions.append(prediction)
 
-        result = future.copy()
-        result["Vehicles"] = predictions
-        return result
+        return predictions

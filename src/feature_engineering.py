@@ -1,11 +1,18 @@
 """
 feature_engineering.py
 
-Creates time-based and statistical features for
-traffic forecasting.
+Feature Engineering Module
+Smart City Traffic Forecasting
 
-Author: Smart City Traffic Forecasting Project
+This module is shared by BOTH
+
+1. Training
+2. Recursive Forecasting
+
+so every feature is generated exactly the same way.
 """
+
+from __future__ import annotations
 
 import numpy as np
 import pandas as pd
@@ -14,20 +21,25 @@ import pandas as pd
 class FeatureEngineer:
 
     def __init__(self):
-        pass
 
-    # -----------------------------
-    # Calendar Features
-    # -----------------------------
+        self.lags = [1, 2, 3, 6, 12, 24]
 
-    def add_datetime_features(self, df):
+        self.windows = [3, 6, 12, 24]
+
+    # ==========================================================
+    # DATETIME FEATURES
+    # ==========================================================
+
+    def add_datetime_features(self, df: pd.DataFrame) -> pd.DataFrame:
 
         df = df.copy()
 
         dt = df["DateTime"]
 
         df["Year"] = dt.dt.year
+
         df["Month"] = dt.dt.month
+
         df["Quarter"] = dt.dt.quarter
 
         df["Week"] = dt.dt.isocalendar().week.astype(int)
@@ -46,11 +58,11 @@ class FeatureEngineer:
 
         return df
 
-    # -----------------------------
-    # Cyclical Features
-    # -----------------------------
+    # ==========================================================
+    # CYCLICAL FEATURES
+    # ==========================================================
 
-    def add_cyclical_features(self, df):
+    def add_cyclical_features(self, df: pd.DataFrame) -> pd.DataFrame:
 
         df = df.copy()
 
@@ -68,84 +80,107 @@ class FeatureEngineer:
 
         return df
 
-    # -----------------------------
-    # Lag Features
-    # -----------------------------
+    # ==========================================================
+    # LAG FEATURES
+    # ==========================================================
 
-    def add_lag_features(self, df):
+    def add_lag_features(self, df: pd.DataFrame) -> pd.DataFrame:
 
         df = df.copy()
 
-        lags = [1, 2, 3, 6, 12, 24]
+        if "Vehicles" not in df.columns:
+            return df
 
-        for lag in lags:
+        for lag in self.lags:
 
             df[f"lag_{lag}"] = df.groupby("Junction")["Vehicles"].shift(lag)
 
         return df
 
-    # -----------------------------
-    # Rolling Statistics
-    # -----------------------------
+    # ==========================================================
+    # ROLLING FEATURES
+    # ==========================================================
 
-    def add_rolling_features(self, df):
-
-        df = df.copy()
-
-        windows = [3, 6, 12, 24]
-
-        for window in windows:
-
-            rolling = df.groupby("Junction")["Vehicles"].shift(1).rolling(window)
-
-            df[f"rolling_mean_{window}"] = rolling.mean()
-
-        df["rolling_std_24"] = (
-            df.groupby("Junction")["Vehicles"].shift(1).rolling(24).std()
-        )
-
-        return df
-
-    # -----------------------------
-    # Exponential Moving Average
-    # -----------------------------
-
-    def add_ema_features(self, df):
+    def add_rolling_features(self, df: pd.DataFrame) -> pd.DataFrame:
 
         df = df.copy()
 
-        df["ema_12"] = df.groupby("Junction")["Vehicles"].transform(
-            lambda x: x.shift(1).ewm(span=12).mean()
-        )
+        if "Vehicles" not in df.columns:
+            return df
 
-        df["ema_24"] = df.groupby("Junction")["Vehicles"].transform(
-            lambda x: x.shift(1).ewm(span=24).mean()
-        )
+        for window in self.windows:
+
+            rolling = df.groupby("Junction")["Vehicles"].rolling(window)
+
+            df[f"rolling_mean_{window}"] = rolling.mean().reset_index(
+                level=0, drop=True
+            )
+
+            df[f"rolling_std_{window}"] = rolling.std().reset_index(level=0, drop=True)
 
         return df
 
-    # -----------------------------
-    # Master Function
-    # -----------------------------
+    # ==========================================================
+    # EXPONENTIAL MOVING AVERAGE
+    # ==========================================================
 
-    def engineer(self, train, test):
+    def add_ema_features(self, df: pd.DataFrame) -> pd.DataFrame:
+
+        df = df.copy()
+
+        if "Vehicles" not in df.columns:
+            return df
+
+        for span in [12, 24]:
+
+            df[f"ema_{span}"] = df.groupby("Junction")["Vehicles"].transform(
+                lambda s: s.ewm(span=span, adjust=False).mean()
+            )
+
+        return df
+
+    # ==========================================================
+    # COMPLETE TRANSFORM
+    # ==========================================================
+
+    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+
+        df = df.copy()
+
+        if "DateTime" in df.columns:
+
+            df["DateTime"] = pd.to_datetime(df["DateTime"])
+
+        df = self.add_datetime_features(df)
+
+        df = self.add_cyclical_features(df)
+
+        df = self.add_lag_features(df)
+
+        df = self.add_rolling_features(df)
+
+        df = self.add_ema_features(df)
+
+        return df
+
+    # ==========================================================
+    # TRAINING PIPELINE
+    # ==========================================================
+
+    def engineer(self, train: pd.DataFrame, test: pd.DataFrame):
 
         print("=" * 60)
         print("Creating Features")
         print("=" * 60)
 
-        train = self.add_datetime_features(train)
-        test = self.add_datetime_features(test)
+        train = self.transform(train)
 
-        train = self.add_cyclical_features(train)
-        test = self.add_cyclical_features(test)
-
-        train = self.add_lag_features(train)
-
-        train = self.add_rolling_features(train)
-
-        train = self.add_ema_features(train)
+        test = self.transform(test)
 
         print("Feature Engineering Complete")
+
+        print()
+
+        print(train.head())
 
         return train, test
